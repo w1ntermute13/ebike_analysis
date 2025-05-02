@@ -50,36 +50,46 @@ def basic_diagnostics(df, voltage_bounds=default_voltage_bounds, current_bounds=
         df['timestamp'] = pd.to_datetime(df['timestamp'])
         df = df.set_index('timestamp')
 
-        # 1. Signal Integrity Checks
+        # --- Track all failed checks ---
+        bad_data_set = set()
+
+        # Constant columns
         for col in df.select_dtypes(include='number').columns:
-            diagnostics[f"{col}_missing_values"] = df[col].isna().sum()
-            diagnostics[f"{col}_constant_value"] = df[col].nunique() <= 1
-            diagnostics[f"{col}_inf_values"] = np.isinf(df[col]).sum()
+            if df[col].nunique() <= 1:
+                bad_data_set.add(f"{col}_constant")
 
-        # 2. Sampling Rate Consistency (timestamp is the index)
-        if isinstance(df.index, pd.DatetimeIndex):
-            time_deltas = df.index.to_series().diff().dropna()
-            diagnostics["irregular_sampling"] = time_deltas.value_counts().shape[0] > 1
-            diagnostics["most_common_interval"] = time_deltas.value_counts().idxmax()
-        else:
-            logger.warning("Index is not a DatetimeIndex; skipping sampling rate check.")
+        # Missing and Inf values
+        for col in df.select_dtypes(include='number').columns:
+            if df[col].isna().any():
+                bad_data_set.add(f"{col}_missing")
+            if np.isinf(df[col]).any():
+                bad_data_set.add(f"{col}_inf")
 
-        # 3. Physical Bounds Checks
-        diagnostics["voltage_out_of_bounds"] = df[
-            (df['batteryVoltage'] < voltage_bounds[0]) | (df['batteryVoltage'] > voltage_bounds[1])
-        ].shape[0]
+        # Out-of-bounds checks
+        bounds_checks = {
+            'batteryVoltage': voltage_bounds,
+            'batteryCurrent': current_bounds,
+            'batteryTemperatureCelsius': temp_bounds,
+            'torqueCrankNm': torque_bounds,
+        }
 
-        diagnostics["current_out_of_bounds"] = df[
-            (df['batteryCurrent'] < current_bounds[0]) | (df['batteryCurrent'] > current_bounds[1])
-        ].shape[0]
+        for col, (lower, upper) in bounds_checks.items():
+            if ((df[col] < lower) | (df[col] > upper)).any():
+                bad_data_set.add(f"{col}_out_of_bounds")
 
-        diagnostics["temperature_out_of_bounds"] = df[
-            (df['batteryTemperatureCelsius'] < temp_bounds[0]) | (df['batteryTemperatureCelsius'] > temp_bounds[1])
-        ].shape[0]
+        # Efficiency check
+        with np.errstate(divide='ignore', invalid='ignore'):
+            df['efficiency'] = df['wheelPowerWatt'] / df['enginePowerWatt'].replace(0, np.nan)
+            df['efficiency'] = df['efficiency'].replace([np.inf, -np.inf], np.nan)
 
-        diagnostics["torque_out_of_bounds"] = df[
-            (df['torqueCrankNm'] < torque_bounds[0]) | (df['torqueCrankNm'] > torque_bounds[1])
-        ].shape[0]
+        if (df['efficiency'] > expected_efficiency_max).any():
+            bad_data_set.add("efficiency_over_limit")
+
+        # Current without voltage
+        if ((df['batteryCurrent'] > 0) & (df['batteryVoltage'] <= 0)).any():
+            bad_data_set.add("current_without_voltage")
+
+        diagnostics["BadData"] = sorted(bad_data_set)
 
         # 4. Efficiency Check
         with np.errstate(divide='ignore', invalid='ignore'):
