@@ -20,6 +20,7 @@ DEFAULT_VISUAL = pd.Series({
     "promised_torque": 70,
     "promised_wheel_power": 320,
     "promised_battery_capacity_Wh": 500,
+    "promised_temperature_deviation": 40,
     "horizontal_vibration_threshold": 2.0,
     "vertical_vibration_threshold": 1.5
 })
@@ -120,12 +121,19 @@ def run_performance_tests(df, promised):
     return result
 
 
-def run_nominal_load_test(df):
+def run_nominal_load_test(df, promised):
+    actual_rise = df['batteryTemperatureCelsius'].max() - df['batteryTemperatureCelsius'].min()
+    expected_rise = promised.get('promised_temperature_deviation')
+
+    # Score decreases as actual_rise increases compared to expected
+    score = max(0, min(100, (expected_rise / actual_rise) * 100))
+
     return {
         'continuous_load_W': df['enginePowerWatt'].mean(),
-        'temperature_rise_C': df['batteryTemperatureCelsius'].max() - df['batteryTemperatureCelsius'].min(),
-        'nominal_load_test_score': None
+        'temperature_rise_C': actual_rise,
+        'nominal_load_test_score': score
     }
+
 
 
 def run_battery_health_test(df, promised):
@@ -174,7 +182,7 @@ def basic_diagnostics(df, promised_series=DEFAULT_VISUAL, bounds=DEFAULT_BOUNDS,
     diagnostics['data_anomalies'] = run_data_quality(df, bounds, expected_efficiency_max)
     diagnostics['efficiency_test'] = run_efficiency_test(df)
     diagnostics['performance_tests'] = run_performance_tests(df, promised_series)
-    diagnostics['nominal_load_test'] = run_nominal_load_test(df)
+    diagnostics['nominal_load_test'] = run_nominal_load_test(df,promised_series)
     diagnostics['battery_health_test'] = run_battery_health_test(df, promised_series)
     diagnostics['vibration_test'] = run_vibration_test(df, promised_series)
 

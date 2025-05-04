@@ -3,8 +3,6 @@ services:
     image: wintermute13/ebike_analysis:latest
     ports:
       - "5000:5000"
-    volumes:
-      - .:/app
     environment:
-      FLASK_ENV: development
-    command: flask run --host=0.0.0.0
+      FLASK_ENV: production
+    restart: always
